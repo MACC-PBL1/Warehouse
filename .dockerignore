@@ -1,0 +1,7 @@
+# Ignore everything by default
+**
+!pyproject.toml
+!src/
+__pycache__/
+*.egg-info/
+*.db
