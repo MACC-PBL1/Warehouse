@@ -44,9 +44,7 @@ async def lifespan(__app: FastAPI):
         logger.info("[LOG:WAREHOUSE] - Creating database tables")
         async with Engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        # logger.info("[LOG:MACHINE] - Creating machine")
-        # await get_machine()
-        # Start RabbitMQ listeners
+
         logger.info("[LOG:WAREHOUSE] - Starting RabbitMQ listeners")
         try:
             for _, queue in LISTENING_QUEUES.items():
@@ -61,7 +59,6 @@ async def lifespan(__app: FastAPI):
                 exc_info=True
             )
 
-        # Register in Consul
         logger.info("[LOG:WAREHOUSE] - Registering service to Consul")
         try:
             service_port = int(os.getenv("PORT", "8000"))
@@ -136,4 +133,4 @@ def start_server():
         config.bind
     )
 
-    asyncio.run(serve(APP, config))  # type: ignore
+    asyncio.run(serve(APP, config)) 
