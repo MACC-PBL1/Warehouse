@@ -14,7 +14,7 @@ class PieceBase(BaseModel):
     created_at: datetime
     manufacturing_started_at: Optional[datetime] = None
     manufactured_at: Optional[datetime] = None
-   # piece_type: str
+    piece_type: str
 
 
 class Piece(PieceBase):

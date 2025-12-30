@@ -24,13 +24,15 @@ PUBLISHING_QUEUES: Dict[LiteralString, LiteralString] = {
     "order_completed": "warehouse.order_completed", 
      "machine_cancel_piece": "warehouse.machine_cancel_piece",
      "warehouse_cancelled": "warehouse.cancelled",
+    "machine_piece_A": "machine.piece.A",
+    "machine_piece_B": "machine.piece.B",
 }
 
 LISTENING_QUEUES: Dict[LiteralString, LiteralString] = {
-    "request_piece": "warehouse.request_piece",
     "piece_executed": "machine.piece_executed",
     "public_key": "client.public_key.warehouse",
     "warehouse_cancel": "warehouse.cancel",
+    "order_created": "order.created"
     
 }
 

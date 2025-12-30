@@ -26,52 +26,61 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-@register_queue_handler(LISTENING_QUEUES["request_piece"])
-async def request_piece(message: MessageType) -> None:
-    """
-    Assigns reusable manufactured pieces to an order
-    and creates missing pieces that need manufacturing.
-    Only NEW pieces are sent to Machine.
-    """
-    assert (order_id := message.get("order_id")), "'order_id' field is required"
-    assert (amount := message.get("amount")), "'amount' field is required"
+@register_queue_handler(LISTENING_QUEUES["order_created"])
+async def order_created(message: MessageType) -> None:
+    assert (order_id := message.get("order_id")) is not None
+    assert (pieces := message.get("pieces")) is not None
 
     order_id = int(order_id)
-    amount = int(amount)
 
     logger.info(
-        "[EVENT:WAREHOUSE:REQUEST_PIECE] - order_id=%s amount=%s",
+        "[EVENT:WAREHOUSE:ORDER_CREATED] - order_id=%s pieces=%s",
         order_id,
-        amount,
+        pieces,
     )
 
-    machine_piece_ids: list[int] = []  #  SOLO piezas a fabricar
+    machine_piece_ids: list[tuple[int, str]] = []  # (piece_id, piece_type)
 
     async with SessionLocal() as db:
 
-        #  REUTILIZAR PIEZAS YA FABRICADAS
-        free_pieces = await get_free_pieces(db, amount)
+        for item in pieces:
+            piece_type = item["piece_type"]
+            quantity = int(item["quantity"])
 
-        for piece in free_pieces:
-            piece.order_id = order_id
-            #  se queda en MANUFACTURED
-            logger.info(
-                "[WAREHOUSE] - Reusing manufactured piece_id=%s for order_id=%s",
-                piece.id,
-                order_id,
+            # REUTILIZAR PIEZAS YA FABRICADAS (POR TIPO)
+            free_pieces = await get_free_pieces(
+                db=db,
+                piece_type=piece_type,
+                limit=quantity,
             )
 
-        missing = amount - len(free_pieces)
+            for piece in free_pieces:
+                piece.order_id = order_id
+                logger.info(
+                    "[WAREHOUSE] - Reusing %s piece_id=%s for order_id=%s",
+                    piece_type,
+                    piece.id,
+                    order_id,
+                )
 
-        #  CREAR PIEZAS NUEVAS (requieren Machine)
-        for _ in range(missing):
-            piece = await create_piece(db=db, order_id=order_id)
-            piece.status = PieceModel.STATUS_QUEUED
-            machine_piece_ids.append(piece.id)
+            missing = quantity - len(free_pieces)
+
+
+            #  CREAR PIEZAS NUEVAS (SOLO LAS QUE FALTAN)
+            for _ in range(missing):
+                piece = await create_piece(
+                    db=db,
+                    order_id=order_id,
+                    piece_type=piece_type,
+                )
+                piece.status = PieceModel.STATUS_QUEUED
+                machine_piece_ids.append((piece.id, piece_type))
 
         await db.commit()
-        if missing == 0:
+
+
+        # SI NO HAY NADA QUE FABRICAR → ORDER COMPLETED
+        if not machine_piece_ids:
             with RabbitMQPublisher(
                 queue=PUBLISHING_QUEUES["order_completed"],
                 rabbitmq_config=RABBITMQ_CONFIG,
@@ -79,31 +88,35 @@ async def request_piece(message: MessageType) -> None:
                 publisher.publish({"order_id": order_id})
 
             logger.info(
-                "[EVENT:WAREHOUSE:ORDER_COMPLETED] - order_id=%s",
+                "[EVENT:WAREHOUSE:ORDER_COMPLETED] - order_id=%s (all reused)",
                 order_id,
             )
+            return
 
-    #  NOTIFY MACHINE: SOLO piezas nuevas
-    if machine_piece_ids:
+    #  NOTIFICAR A MACHINE: SOLO PIEZAS NUEVAS, POR TIPO
+    for piece_id, piece_type in machine_piece_ids:
+        queue_name = PUBLISHING_QUEUES[f"machine_piece_{piece_type}"]
+
         with RabbitMQPublisher(
-            queue=PUBLISHING_QUEUES["piece_created"],
+            queue=queue_name,
             rabbitmq_config=RABBITMQ_CONFIG,
         ) as publisher:
-            for piece_id in machine_piece_ids:
-                publisher.publish({"piece_id": piece_id})
+            publisher.publish({
+                "piece_id": piece_id,
+                "piece_type": piece_type,
+            })
 
     logger.info(
-        "[EVENT:WAREHOUSE:PIECES_ASSIGNED] - order_id=%s reused=%s created=%s",
+        "[EVENT:WAREHOUSE:PIECES_ASSIGNED] - order_id=%s created=%s",
         order_id,
-        len(free_pieces),
         len(machine_piece_ids),
     )
-
 
 
 @register_queue_handler(LISTENING_QUEUES["piece_executed"])
 async def piece_executed(message: MessageType) -> None:
     piece_id = int(message["piece_id"])
+    piece_type = message.get("piece_type")  
 
     async with SessionLocal() as db:
         piece = await get_piece(db, piece_id)
@@ -115,8 +128,9 @@ async def piece_executed(message: MessageType) -> None:
             piece.status = piece.STATUS_MANUFACTURED
             await db.commit()
             logger.info(
-                "[WAREHOUSE] - Executed piece %s stored as free stock",
+                "[WAREHOUSE] - Executed piece %s (type=%s) stored as free stock",
                 piece_id,
+                piece_type,
             )
             return
 

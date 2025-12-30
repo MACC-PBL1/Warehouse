@@ -19,9 +19,11 @@ logger = logging.getLogger(__name__)
 async def create_piece(
     db: AsyncSession,
     order_id: int,
+    piece_type: str,
 ) -> PieceModel:
     piece = PieceModel(
         order_id=order_id,
+        piece_type=piece_type,
         status=PieceModel.STATUS_CREATED,
     )
     db.add(piece)
@@ -169,6 +171,7 @@ async def cancel_pieces_by_order(
 
 async def get_free_pieces(
     db: AsyncSession,
+    piece_type: str, 
     limit: int,
 ) -> list[PieceModel]:
     return await get_list_statement_result(
@@ -178,6 +181,7 @@ async def get_free_pieces(
             .where(
                 PieceModel.order_id.is_(None),
                 PieceModel.status == PieceModel.STATUS_MANUFACTURED,
+                PieceModel.piece_type == piece_type,
             )
             .with_for_update(skip_locked=True)
             .limit(limit)
