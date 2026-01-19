@@ -1,9 +1,5 @@
 from . import events
-from typing import (
-    List,
-    LiteralString,
-)
 
-__all__: List[LiteralString] = [
+__all__: list[str] = [
     "events"
 ]

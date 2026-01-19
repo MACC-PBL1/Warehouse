@@ -1,3 +1,4 @@
+from .business_logic import WarehouseManager
 from .global_vars import (
     LISTENING_QUEUES,
     RABBITMQ_CONFIG,
@@ -32,50 +33,51 @@ setup_rabbitmq_logging(
 logger = get_logger(__name__)
 
 from .routers import Router
-from .messaging import *  # event handlers (request_piece, cancel_order, etc.)
+from .messaging import *
 
 # App Lifespan #####################################################################################
 @asynccontextmanager
 async def lifespan(__app: FastAPI):
     try:
         logger.info("[LOG:WAREHOUSE] - Starting up")
-
-        # Create DB tables
-        logger.info("[LOG:WAREHOUSE] - Creating database tables")
-        async with Engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-        logger.info("[LOG:WAREHOUSE] - Starting RabbitMQ listeners")
         try:
-            for _, queue in LISTENING_QUEUES.items():
-                Thread(
-                    target=start_rabbitmq_listener,
-                    args=(queue, RABBITMQ_CONFIG),
-                    daemon=True,
-                ).start()
+            # Create DB tables
+            logger.info("[LOG:WAREHOUSE] - Creating database tables")
+            async with Engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+            await WarehouseManager.create()
+
+            logger.info("[LOG:WAREHOUSE] - Starting RabbitMQ listeners")
+            try:
+                for _, queue in LISTENING_QUEUES.items():
+                    Thread(
+                        target=start_rabbitmq_listener,
+                        args=(queue, RABBITMQ_CONFIG),
+                        daemon=True,
+                    ).start()
+            except Exception as e:
+                logger.error(
+                    f"[LOG:WAREHOUSE] - Could not start RabbitMQ listeners: {e}",
+                    exc_info=True
+                )
+            logger.info("[LOG:WAREHOUSE] - Registering service to Consul")
+            try:
+                service_port = int(os.getenv("PORT", "8000"))
+                consul = ConsulClient(logger=logger)
+                consul.register_service(
+                    service_name="warehouse-service",
+                    port=service_port,
+                    health_path="/warehouse/health"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[LOG:WAREHOUSE] - Failed to register with Consul: {e}",
+                    exc_info=True
+                )
+            yield
         except Exception as e:
-            logger.error(
-                f"[LOG:WAREHOUSE] - Could not start RabbitMQ listeners: {e}",
-                exc_info=True
-            )
-
-        logger.info("[LOG:WAREHOUSE] - Registering service to Consul")
-        try:
-            service_port = int(os.getenv("PORT", "8000"))
-            consul = ConsulClient(logger=logger)
-            consul.register_service(
-                service_name="warehouse-service",
-                port=service_port,
-                health_path="/warehouse/health"
-            )
-        except Exception as e:
-            logger.error(
-                f"[LOG:WAREHOUSE] - Failed to register with Consul: {e}",
-                exc_info=True
-            )
-
-        yield
-
+            logger.error(f"[LOG:ORDER] - Could not create tables at startup: Reason={e}", exc_info=True)
     finally:
         logger.info("[LOG:WAREHOUSE] - Shutting down database")
         await Engine.dispose()
@@ -133,4 +135,4 @@ def start_server():
         config.bind
     )
 
-    asyncio.run(serve(APP, config)) 
+    asyncio.run(serve(APP, config))  # type: ignore

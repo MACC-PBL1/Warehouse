@@ -18,23 +18,13 @@ RABBITMQ_CONFIG: RabbitMQConfig = {
     "client_key": Path(client_key_path) if (client_key_path := os.getenv("RABBITMQ_CLIENT_KEY_PATH")) else None,
     "prefetch_count": int(os.getenv("RABBITMQ_PREFETCH_COUNT", 10)),
 }
-
-PUBLISHING_QUEUES: Dict[LiteralString, LiteralString] = {
-    "piece_created": "warehouse.piece_created",
-    "order_completed": "warehouse.order_completed", 
-     "machine_cancel_piece": "warehouse.machine_cancel_piece",
-     "warehouse_cancelled": "warehouse.cancelled",
-    "machine_piece_A": "machine.piece.A",
-    "machine_piece_B": "machine.piece.B",
-}
-
 LISTENING_QUEUES: Dict[LiteralString, LiteralString] = {
-    "piece_executed": "machine.piece_executed",
-    "public_key": "client.public_key.warehouse",
-    "warehouse_cancel": "warehouse.cancel",
-    "order_created": "order.created"
-    
+    "piece_request": "order.piece.request",
+    "piece_producing": "machine.piece.producing",
+    "piece_produced": "machine.piece.produced",
+    "saga_reserve": "warehouse.reserve",
+    "saga_release": "warehouse.release",
+    "saga_cancel": "warehouse.cancel",
+    "public_key": "client.public_key.order",
 }
-
-
 PUBLIC_KEY: Dict[str, Optional[str]] = {"key": None}

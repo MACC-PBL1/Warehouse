@@ -1,189 +1,180 @@
-# warehouse/crud.py
-from .models import PieceModel
-from chassis.sql import (
-    get_list_statement_result,
-    get_element_statement_result,
+from .models import (
+    Piece,
+    Warehouse,
 )
-from datetime import datetime
+from chassis.sql import (
+    get_element_by_id,
+    get_list_statement_result,
+    update_elements_statement_result,
+)
+from sqlalchemy import (
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from typing import List, Optional
-import logging
+from typing import Optional
 
-logger = logging.getLogger(__name__)
-
-# =========================
-# PIECE (WAREHOUSE)
-# =========================
+async def cancel_queued_pieces_in_order(
+    db: AsyncSession,
+    order_id: int,
+) -> list[Piece]:
+    await update_elements_statement_result(
+        db=db,
+        stmt=(
+            update(Piece)
+                .where(Piece.order_id == order_id)
+                .where(Piece.status == Piece.STATUS_QUEUED)
+                .values(status=Piece.STATUS_CANCELLED)
+        )
+    )
+    return await get_list_statement_result(
+        db=db,
+        stmt=(
+            select(Piece)
+                .where(Piece.order_id == order_id)
+                .where(Piece.status == Piece.STATUS_CANCELLED)
+        )
+    )
 
 async def create_piece(
     db: AsyncSession,
     order_id: int,
     piece_type: str,
-) -> PieceModel:
-    piece = PieceModel(
+) -> Piece:
+    piece = Piece(
         order_id=order_id,
-        piece_type=piece_type,
-        status=PieceModel.STATUS_CREATED,
+        type=piece_type,
+        status=Piece.STATUS_QUEUED,
     )
     db.add(piece)
+    await db.flush()
     await db.commit()
     await db.refresh(piece)
     return piece
 
+async def create_warehouse(db: AsyncSession, warehouse_id: int) -> Warehouse:
+    warehouse = Warehouse(id=warehouse_id, reserved=0)
+    db.add(warehouse)
+    await db.flush()
+    await db.commit()
+    await db.refresh(warehouse)
+    return warehouse
 
+async def derregister_active_pieces_from_order(
+    db: AsyncSession,
+    order_id: int,
+) -> None:
+    await update_elements_statement_result(
+        db=db,
+        stmt=(
+            update(Piece)
+                .where(Piece.order_id == order_id)
+                .where(
+                    (Piece.status == Piece.STATUS_PRODUCED) | 
+                    (Piece.status == Piece.STATUS_PRODUCING)
+                )
+                .values(order_id=None)
+        )
+    )
+
+async def get_free_pieces(
+    db: AsyncSession,
+    piece_type: str,
+    quantity: Optional[int],
+) -> list[Piece]:
+    return await get_list_statement_result(
+        db=db,
+        stmt=(
+            select(Piece)
+                .where(Piece.order_id == None)
+                .where(Piece.status == Piece.STATUS_PRODUCED)
+                .where(Piece.type == piece_type)
+        )
+        .with_for_update(skip_locked=True)
+        .limit(quantity)
+    )
 
 async def get_piece(
     db: AsyncSession,
     piece_id: int,
-) -> Optional[PieceModel]:
-    return await get_element_statement_result(
+) -> Optional[Piece]:
+    return await get_element_by_id(
         db=db,
-        stmt=select(PieceModel).where(PieceModel.id == piece_id),
+        model=Piece,
+        element_id=piece_id,
     )
-
-
-async def get_pieces(db: AsyncSession) -> List[PieceModel]:
-    return await get_list_statement_result(
-        db=db,
-        stmt=select(PieceModel),
-    )
-
 
 async def get_pieces_by_order(
     db: AsyncSession,
     order_id: int,
-) -> List[PieceModel]:
+) -> list[Piece]:
     return await get_list_statement_result(
         db=db,
-        stmt=select(PieceModel).where(PieceModel.order_id == order_id),
+        stmt=select(Piece).where(Piece.order_id == order_id),
     )
 
-
-async def get_pieces_by_status(
+async def get_warehouse(
     db: AsyncSession,
-    status: str,
-) -> List[PieceModel]:
-    return await get_list_statement_result(
+    warehouse_id: int,
+) -> Optional[Warehouse]:
+    return await get_element_by_id(
         db=db,
-        stmt=select(PieceModel).where(PieceModel.status == status),
+        model=Warehouse,
+        element_id=warehouse_id,
     )
 
-
-async def mark_piece_queued(
+async def release_pieces(
     db: AsyncSession,
-    piece_id: int,
-) -> Optional[PieceModel]:
-    piece = await get_piece(db, piece_id)
-    if piece:
-        piece.status = PieceModel.STATUS_QUEUED
-        await db.commit()
-        await db.refresh(piece)
-    return piece
-
-
-async def mark_piece_manufacturing_started(
-    db: AsyncSession,
-    piece_id: int,
-) -> Optional[PieceModel]:
-    piece = await get_piece(db, piece_id)
-    if piece:
-        piece.status = PieceModel.STATUS_MANUFACTURING
-        piece.manufacturing_started_at = datetime.utcnow()
-        await db.commit()
-        await db.refresh(piece)
-    return piece
-
-
-async def mark_piece_manufactured(
-    db: AsyncSession,
-    piece_id: int,
-) -> Optional[PieceModel]:
-    piece = await get_piece(db, piece_id)
-    if piece:
-        piece.status = PieceModel.STATUS_MANUFACTURED
-        piece.manufactured_at = datetime.utcnow()
-        await db.commit()
-        await db.refresh(piece)
-    return piece
-
-
-
-
-async def are_all_pieces_manufactured(
-    db: AsyncSession,
-    order_id: int,
-) -> bool:
-
-    pieces = await get_pieces_by_order(db, order_id)
-
-    if not pieces:
-        logger.warning(
-            "[WAREHOUSE] - No pieces found for order_id=%s",
-            order_id,
+    warehouse_id: int,
+    quantity: int,
+) -> None:
+    await update_elements_statement_result(
+        db=db,
+        stmt=(
+            update(Warehouse)
+                .where(Warehouse.id == warehouse_id)
+                .values(reserved=Warehouse.reserved - quantity)
         )
-        return False
+    )
 
-    for piece in pieces:
-        if piece.status != PieceModel.STATUS_MANUFACTURED:
-            return False
-    return True
-
-async def cancel_pieces_by_order(
+async def reserve_pieces(
     db: AsyncSession,
-    order_id: int,
-) -> int:
-    """
-    Cancels all cancellable pieces for an order.
-    Rules:
-    - MANUFACTURED → NO SE TOCA
-    - MANUFACTURING → NO SE TOCA 
-    - CREATED / QUEUED → CANCELLED
-    """
-
-    pieces = await get_pieces_by_order(db, order_id)
-
-    cancelled_count = 0
-
-    for piece in pieces:
-        if piece.status in (
-            PieceModel.STATUS_CREATED,
-            PieceModel.STATUS_QUEUED,
-        ):
-            piece.status = PieceModel.STATUS_CANCELLED
-
-
-            piece.order_id = None
-
-            cancelled_count += 1
+    warehouse_id: int,
+    quantity: int,
+    max_capacity: int
+) -> None:
+    result = await (await db.connection()).execute(
+        update(Warehouse)
+            .where(Warehouse.id == warehouse_id)
+            .where(Warehouse.reserved + quantity <= max_capacity)
+            .values(reserved=Warehouse.reserved + quantity) 
+    )
 
     await db.commit()
 
-    logger.info(
-        "[WAREHOUSE] - cancel_pieces_by_order: order_id=%s cancelled=%s",
-        order_id,
-        cancelled_count,
-    )
+    if result.rowcount == 0:
+        raise ValueError("Warehouse capacity exceeded")
 
-    return cancelled_count
-
-
-
-async def get_free_pieces(
+async def update_piece(
     db: AsyncSession,
-    piece_type: str, 
-    limit: int,
-) -> list[PieceModel]:
-    return await get_list_statement_result(
+    piece: Piece,
+    **updates,
+) -> Optional[Piece]:
+    """
+    Update multiple fields on a Piece object using direct UPDATE statement.
+    
+    Example:
+        await update_piece(db, piece, status="completed", order_id=5)
+    """
+    if not updates:
+        return piece
+    
+    piece_id = piece.id
+
+    await update_elements_statement_result(
         db=db,
-        stmt=(
-            select(PieceModel)
-            .where(
-                PieceModel.order_id.is_(None),
-                PieceModel.status == PieceModel.STATUS_MANUFACTURED,
-                PieceModel.piece_type == piece_type,
-            )
-            .with_for_update(skip_locked=True)
-            .limit(limit)
-        )
+        stmt=update(Piece)
+                .where(Piece.id == piece_id)
+                .values(**updates)
     )
+    return await get_element_by_id(db=db, model=Piece, element_id=piece_id)
