@@ -8,7 +8,7 @@ from chassis.logging import (
     setup_rabbitmq_logging,
 )
 from chassis.messaging import start_rabbitmq_listener
-from chassis.consul import ConsulClient
+from chassis.consul import CONSUL_CLIENT
 from chassis.sql import (
     Base,
     Engine,
@@ -63,12 +63,10 @@ async def lifespan(__app: FastAPI):
                 )
             logger.info("[LOG:WAREHOUSE] - Registering service to Consul")
             try:
-                service_port = int(os.getenv("PORT", "8000"))
-                consul = ConsulClient(logger=logger)
-                consul.register_service(
-                    service_name="warehouse-service",
-                    port=service_port,
-                    health_path="/warehouse/health"
+                CONSUL_CLIENT.register_service(
+                    service_name="delivery",
+                    ec2_address=os.getenv("HOST_IP", "localhost"),
+                    service_port=int(os.getenv("HOST_PORT", 80)),
                 )
             except Exception as e:
                 logger.error(
@@ -81,6 +79,7 @@ async def lifespan(__app: FastAPI):
     finally:
         logger.info("[LOG:WAREHOUSE] - Shutting down database")
         await Engine.dispose()
+        CONSUL_CLIENT.deregister_service()
 
 
 
