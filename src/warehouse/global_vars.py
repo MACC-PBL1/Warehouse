@@ -6,6 +6,7 @@ from typing import (
     Optional,
 )
 import os
+import socket
 
 RABBITMQ_CONFIG: RabbitMQConfig = {
     "host": os.getenv("RABBITMQ_HOST", "localhost"),
@@ -18,13 +19,13 @@ RABBITMQ_CONFIG: RabbitMQConfig = {
     "client_key": Path(client_key_path) if (client_key_path := os.getenv("RABBITMQ_CLIENT_KEY_PATH")) else None,
     "prefetch_count": int(os.getenv("RABBITMQ_PREFETCH_COUNT", 10)),
 }
-LISTENING_QUEUES: Dict[LiteralString, LiteralString] = {
+LISTENING_QUEUES: Dict[LiteralString, str] = {
     "piece_request": "order.piece.request",
     "piece_producing": "machine.piece.producing",
     "piece_produced": "machine.piece.produced",
     "saga_reserve": "warehouse.reserve",
     "saga_release": "warehouse.release",
     "saga_cancel": "warehouse.cancel",
-    "public_key": "client.public_key.order",
+    "public_key": f"client.public_key.warehouse.{socket.gethostname()}",
 }
 PUBLIC_KEY: Dict[str, Optional[str]] = {"key": None}

@@ -124,15 +124,16 @@ async def warehouse_release(message: MessageType) -> None:
 
 @register_queue_handler(
     queue=LISTENING_QUEUES["saga_cancel"],
-    exchange="cmd",
-    exchange_type="topic",
-    routing_key="warehouse.cancel"
+    exchange="cancellation-approved",
+    exchange_type="fanout",
 )
 async def warehouse_cancel(message: MessageType) -> None:
     assert (order_id := message.get("order_id")) is not None, "'order_id' should exist"
+
     order_id = int(order_id)
+
     logger.info(
-        "[CMD:WAREHOUSE_CANCEL:RECEIVED] - Received order cancel command: "
+        "[EVENT:WAREHOUSE_CANCEL:RECEIVED] - Received order cancel command: "
         f"order_id={order_id}, "
     )
     await WarehouseManager.cancel_order(order_id)
