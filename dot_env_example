@@ -1,4 +1,0 @@
-COMPOSE_PROJECT_NAME=warehouse
-SQLALCHEMY_SQLITE_DATABASE_URI=sqlite+aiosqlite:////database/warehouse.db
-RABBITMQ_USER=guest
-RABBITMQ_PASSWD=guest
